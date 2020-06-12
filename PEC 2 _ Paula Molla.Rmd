@@ -1,0 +1,246 @@
+---
+title: "PEC 2 _ Análisis de datos ómicos"
+author: "Paula Molla"
+date: "6/8/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      comment = NA, prompt = TRUE, tidy = FALSE, 
+                      fig.width = 7, fig.height = 7, fig_caption = TRUE,
+                      cache=FALSE)
+Sys.setlocale("LC_TIME", "C")
+```
+
+```{r echo=FALSE}
+if(!(require(printr))) {
+  install.packages(
+    'printr',
+    type = 'source',
+    repos = c('http://yihui.name/xran', 'http://cran.rstudio.com')
+  )
+}
+```
+
+```{r }
+# Se ha realizado un filtraje manual de los datos, seleccionando 10 de caga grupo (NIT, SFI, ELI) y eliminando el resto. Se delimita el número de caracteres de rowname de Counts para que coincida con el valor "ENSEMBL" de la anotación de los genes.
+library(readr)
+targets <- read.csv2("targets2.csv", header = TRUE, sep = ",") 
+counts_info <- read.csv2("counts2.csv", ";", row.names=1, header = TRUE, sep = ";")
+rownames(counts_info) <- substr(rownames(counts_info), 0,15)
+```
+
+```{r }
+# Lo primero que tenemos que hacer es crear un objeto DGEList a partir de la matriz de conteos (rawCountTable) y la informaición de las muestras (sampleInfo).
+# BiocManager::install("biocLite")
+library(edgeR)
+library(limma)
+DGE_pec2 <- DGEList(counts_info, group = targets$Group)
+colnames(DGE_pec2) <- targets$ShortName
+```
+
+```{r }
+# Una vez creado este objeto se comprobó que en "$counts" se encontraba correctamente almacenada la matriz numérica con el recuento de lecturas:
+head(DGE_pec2$counts)
+```
+
+```{r }
+# Y además, se comprobó que en "$samples" apareciese la información necesaria para el análisis (Group):
+DGE_pec2$samples
+```
+
+1. Identificar que grupos hay y a qué grupo pertenece cada muestra.
+
+```{r }
+# Existen 3 grupos: NIT (non infiltrated tissues), SMI (small focal infiltrates) y ELI (expansives lymphoid infiltrates). A continueción se muestra a que grupo pertenece cada una de las muestras (habien 10 muestras por cada grupo):
+# GTEX-111CU-0226-SM-5GZXC	 → NIT - Non infiltrated tissues 
+# GTEX-111VG-0526-SM-5N9BW	 → ELI - Expansives lymphoid infiltrates
+# GTEX-117YW-0126-SM-5EGGN	 → SFI - Small focal infiltrates
+# GTEX-11DZ1-2726-SM-5A5KH	 → NIT - Non infiltrated tissues 
+# GTEX-11NV4-0626-SM-5N9BR	 → ELI - Expansives lymphoid infiltrates
+# GTEX-11XUK-0226-SM-5EQLW	 → ELI - Expansives lymphoid infiltrates
+# GTEX-12WSH-0226-SM-5GCOG	 → NIT - Non infiltrated tissues 
+# GTEX-132AR-1126-SM-5P9GA	 → NIT - Non infiltrated tissues 
+# GTEX-13NZ9-1126-SM-5MR37	 → ELI - Expansives lymphoid infiltrates
+# GTEX-13O1R-0826-SM-5J2MB	 → SFI - Small focal infiltrates
+# GTEX-13OVG-0226-SM-5LU93	 → NIT - Non infiltrated tissues 
+# GTEX-13QJC-0826-SM-5RQKC	 → ELI - Expansives lymphoid infiltrates
+# GTEX-145ME-0126-SM-5S2QM	 → NIT - Non infiltrated tissues 
+# GTEX-14ABY-0926-SM-5Q5DY	 → ELI - Expansives lymphoid infiltrates
+# GTEX-14BMU-0226-SM-5S2QA	 → ELI - Expansives lymphoid infiltrates
+# GTEX-OHPK-2626-SM-2HMK9	   → NIT - Non infiltrated tissues 
+# GTEX-P78B-0526-SM-2I5F7	   → SFI - Small focal infiltrates
+# GTEX-QEG5-0826-SM-2I5GF	   → NIT - Non infiltrated tissues 
+# GTEX-R55E-0826-SM-2TC5M	   → SFI - Small focal infiltrates
+# GTEX-S32W-0726-SM-2XCBL	   → NIT - Non infiltrated tissues 
+# GTEX-SIU8-0626-SM-2XCDN	   → SFI - Small focal infiltrates 
+# GTEX-TMMY-0826-SM-33HB9	   → ELI - Expansives lymphoid infiltrates
+# GTEX-TSE9-0626-SM-3DB8B	   → SFI - Small focal infiltrates 
+# GTEX-WYVS-0326-SM-3NM9V	   → SFI - Small focal infiltrates 
+# GTEX-X4XY-0826-SM-4E3JM	   → NIT - Non infiltrated tissues 
+# GTEX-Y5V6-0526-SM-4VBRV	   → SFI - Small focal infiltrates 
+# GTEX-YFC4-2626-SM-5P9FQ	   → ELI - Expansives lymphoid infiltrates
+# GTEX-YJ89-0726-SM-5P9F7	   → ELI - Expansives lymphoid infiltrates
+# GTEX-ZE7O-1126-SM-57WC8	   → SFI - Small focal infiltrates 
+# GTEX-ZLV1-0126-SM-4WWBZ    → SFI - Small focal infiltrates 
+```
+
+2. Anotación de los resultados
+
+```{r }
+# BiocManager::install("AnnotationHub")
+library(AnnotationHub)
+library(hgu95av2.db)
+```
+
+```{r }
+AH <- AnnotationHub()
+query(AH, "hgu95av2.db")
+egid <- head(keys(hgu95av2.db, "ENSEMBL"))
+select(hgu95av2.db, keys=egid,columns=c("SYMBOL","GENENAME"),keytype ="ENSEMBL")
+genes_info <- select(hgu95av2.db, keys = egid,columns=c("SYMBOL","GENENAME"),keytype = "ENSEMBL")
+```
+
+3. Normalización
+
+```{r Normalization}
+DGE_pec2_norm <- calcNormFactors(object = DGE_pec2, method = "TMM")
+```
+
+```{r }
+# Ejecutamos la siguiente orden para actualizar los factores de normalización. 
+DGE_pec2_norm$samples
+```
+
+4. Crear matriz para análisis
+
+```{r }
+# Primero realizamos la creación de matriz de diseño y matriz de contraste
+```
+
+```{r }
+# Matriz de diseño
+require(Biobase)
+require(limma)
+lev <- DGE_pec2_norm$samples$group
+design <-model.matrix(~0+lev)
+colnames(design)<-levels(lev)
+print(design)
+```
+
+```{r }
+# Matriz de contraste 
+require(limma)
+cont.matrix <- makeContrasts(
+  ELI.vs.NIT=(ELI-NIT),
+  ELI.vs.SFI=(ELI-SFI),
+  SFI.vs.NIT=(SFI-NIT),
+  levels=design)
+cont.matrix
+```
+
+```{r }
+# Matriz de contraste ELI.vs.NIT
+require(limma)
+cont.matrix1 <- makeContrasts(
+  ELI.vs.NIT=(ELI-NIT),
+  levels=design)
+cont.matrix1
+```
+
+```{r }
+# Matriz de contraste ELI.vs.SFI
+require(limma)
+cont.matrix2 <- makeContrasts(
+  ELI.vs.SFI=(ELI-SFI),
+  levels=design)
+cont.matrix2
+```
+
+```{r }
+# Matriz de contraste SFI.vs.NIT
+require(limma)
+cont.matrix3 <- makeContrasts(
+  SFI.vs.NIT=(SFI-NIT),
+  levels=design)
+cont.matrix3
+```
+
+5. Normalizar varianza en función de las medias (trasformación Voom)
+
+```{r }
+# Trasformación de los datos mediante el método "Voom". Debido a que en Limma el ajuste del modelo no se realiza directamente en los datos de conteo brutos, debemos realizar un transformación mediante la función voom(). Voom extrae la información necesaria para realizar la transformación y produce un obejto de clase EList.
+DGE_pec2_voom <- voom(DGE_pec2_norm, design, plot = TRUE)
+```
+
+6. Análisis de expresión diferencial
+
+```{r }
+# 1. Ajuste de los modelos lineales
+vfit <- lmFit(DGE_pec2_voom, design)
+# 2. Estimación de los contrastes
+vfit_est <- contrasts.fit(vfit, contrasts=cont.matrix) 
+# 3. Análisis diferencial basado en métodos bayesianos
+efit <- eBayes(vfit_est)
+```
+
+```{r }
+plotSA(efit,	main="Final model: Mean−variance trend")
+```
+
+7. Realización de test y comparaciones múltiples
+
+```{r }
+# Realización de test 
+sig_test <- decideTests(efit)
+summary(sig_test)
+# Diagrama de Venn
+vennDiagram(sig_test[,1:3], main="Genes in common", cex=0.9)
+```
+
+8. Identificación de genes diferencialmente expresados(test exacto binomial)
+
+```{r }
+# La selección de genes se realiza a un nivel de significancia p=0,05 (que es el que estable la función por defecto). Se ordenan de menor a mayor valor de p.
+y <- estimateDisp(DGE_pec2_norm, design)
+```
+
+```{r }
+# ELI vs NIT
+etest_EN <- exactTest(y, pair = c("ELI","NIT"))
+topTags(etest_EN)
+topEN <- topTags(etest_EN)
+colEN <- c("ENSG00000196684","ENSG00000211772","ENSG00000139626","ENSG00000005844","ENSG00000100385","ENSG00000172794","ENSG00000026950","ENSG00000204475","ENSG00000147138","ENSG00000089692")
+genes1 <- select(hgu95av2.db, keys = colEN,columns=c("SYMBOL","GENENAME"),keytype = "ENSEMBL")
+topEN1 <- data.frame (topEN, genes1)
+topEN1
+```
+
+```{r }
+# ELI vs SFI
+etest_ES <- exactTest(y, pair = c("ELI","SFI"))
+topTags(etest_ES)
+topES <- topTags(etest_ES)
+colES <- c("ENSG00000165178","ENSG00000105255","ENSG00000232788","ENSG00000238113","ENSG00000215644","ENSG00000214900","ENSG00000225756","ENSG00000103253","ENSG00000204475","ENSG00000204282")
+genes2 <- select(hgu95av2.db, keys = colES,columns=c("SYMBOL","GENENAME"),keytype = "ENSEMBL")
+topES1 <- data.frame (topES, genes2)
+topES1
+```
+
+```{r }
+# SFI vs NIT
+etest_SN <- exactTest(y, pair = c("SFI","NIT"))
+topTags(etest_SN)
+topSN <- topTags(etest_SN)
+colSN <- c("ENSG00000156738","ENSG00000160856","ENSG00000161570","ENSG00000196092","ENSG00000136573","ENSG00000117322","ENSG00000255518","ENSG00000196684","ENSG00000181847","ENSG00000223350")
+genes3 <- select(hgu95av2.db, keys = colSN,columns=c("SYMBOL","GENENAME"),keytype = "ENSEMBL")
+topSN1 <- data.frame (topSN, genes3)
+topSN1
+```
+
+
+
